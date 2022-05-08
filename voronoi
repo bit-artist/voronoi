@@ -1,0 +1,186 @@
+#!/usr/bin/env -S sh -c 'exec awk -f "$0" -- "$0" "$@"'
+
+# MIT License
+# 
+# Copyright (c) 2022 Rainer Holzner (rholzner@web.de)
+# 
+# Permission is hereby granted, free of charge, to any person obtaining a copy
+# of this software and associated documentation files (the "Software"), to deal
+# in the Software without restriction, including without limitation the rights
+# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+# copies of the Software, and to permit persons to whom the Software is
+# furnished to do so, subject to the following conditions:
+# 
+# The above copyright notice and this permission notice shall be included in all
+# copies or substantial portions of the Software.
+# 
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+# SOFTWARE.
+
+# Passing option arguments to awk scripts is awkward ;)
+
+BEGIN {
+	parse_options()
+	if (get_option("h")) {
+		show_help()
+		exit
+	}
+	x_max=get_option("x")  # Number of horizontal cells or pixels
+	y_max=get_option("y")  # Number of vertical cells or pixels
+	i_max=get_option("i")  # Number of centers
+	d_center_size=0.0      # Size of a center marker (0.0 = 1 cell or pixel)
+
+	# Choose random center coordinates
+	for (i=0; i<i_max; i++) {
+		px[i]=int((rand()*(x_max-1)))
+		py[i]=int((rand()*(y_max-1)))
+	}
+
+	if (get_option("v")) {
+		printf ("%s: Centers=", ARGV[1]) > "/dev/stderr"
+		for (i in px) {
+			printf("(%d,%d) ", px[i], py[i]) > "/dev/stderr"
+		}
+		print > "/dev/stderr"
+	}
+
+	if (get_option("netpbm")) {
+		printf("P3\n%d %d\n255\n", x_max, y_max)
+		# The center radius should grow with the image size 
+		if (x_max > 200) {
+			d_threshold=4.0
+		}
+	}
+
+	# Precalculate worst case distance
+	d_min_init=sqrt(x_max*x_max+y_max*y_max)+1
+
+	# For each cell/pixel find minumum distance to the next center
+	for (y=0; y<y_max; y++) {
+		for (x=0; x<x_max; x++) {
+			d_min=d_min_init
+			d_n=0
+			n=0
+			for (; n<i_max; n++) {
+				if (px[n] == x && py[n] == y) {
+					d_min=0
+					d_n=n
+					break
+				} else {
+					d=sqrt((x-px[n])*(x-px[n])+(y-py[n])*(y-py[n]))
+					if (d<d_min) {
+						d_min=d
+						d_n=n
+					}
+				}
+			}
+			draw(d_min,d_n)
+		}
+		print
+	}
+
+	# Jump to END
+	exit
+}
+
+END {
+	if (get_option("v")) {
+		print ARGV[1]": Done." > "/dev/stderr"
+	}
+}
+
+function draw(distance, number)
+{
+	if (get_option("netpbm")) {
+		if (distance <= d_center_size) {
+			printf("  0   0   0\n")        # Print center
+		} else {
+			printf("%s\n", to_RGB(number)) # Print value
+		}
+	} else {
+		if (distance <= d_center_size) {
+			printf("%c", toupper(to_ascii(number))) # Print center
+		} else {
+			printf("%c", to_ascii(number))          # Print value
+		}
+	}
+}
+
+function to_ascii(num)
+{
+	letters="abcdefghijklmnopqrstuvwxyz"
+	return substr(letters,(num+1)%length(letters),1)
+}
+
+function to_RGB(num)
+{
+	colors[0]="255   0   0" # Red
+	colors[1]="  0 255   0" # Green
+	colors[2]="  0   0 255" # Blue
+	colors[3]="255 255   0" # Yellow
+	colors[4]="255   0 255" # Magenta
+	colors[5]="  0 255 255" # Cyan
+	colors[6]="190 190 190" # Grey
+	colors[7]="255 192 203" # Pink
+
+	return colors[num%8]
+}
+
+function parse_options()
+{
+	# Default options: Write ASCII diagram to terminal
+	options["x"]=80
+	options["y"]=24
+	options["i"]=10
+	options["netpbm"]=0
+	options["v"]=0
+	options["h"]=0
+
+	for (i=0; i<ARGC; i++) {
+		if (ARGV[i] == "--netpbm") {
+			options["netpbm"]=1
+		} else if (ARGV[i] == "-x") {
+			# 0+ ensures that a nummeric value is assigned instead of a string
+			options["x"]=0+ARGV[++i]
+		} else if (ARGV[i] == "-y") {
+			options["y"]=0+ARGV[++i]
+		} else if (ARGV[i] == "-i") {
+			options["i"]=0+ARGV[++i]
+		} else if (ARGV[i] == "-v") {
+			options["v"]=1
+		} else if (ARGV[i] == "-h" || ARGV[i] == "--help") {
+			options["h"]=1
+		}
+	}
+}
+
+function get_option(key,   ret)
+{
+	if (key in options) {
+		ret=options[key]
+	}
+	return ret
+}
+
+function show_help()
+{
+	print \
+	"Create a Voronoi diagram\n" \
+	"\n" \
+	"The diagram is always written as text to stdout. Debug, error and verbose\n" \
+	"output goes to stderr. When called with no options, writes a 80x24 ASCII\n" \
+	"diagram with 10 centers to stdout. Centers are written in capital letters.\n" \
+	"\n" \
+	"Options:\n" \
+	"  -h|--help  Shows help text\n" \
+	"  -x <num>   Number of columns or horizontal pixels\n" \
+	"  -y <num>   Number of lines or vertical pixels\n" \
+	"  -i <num>   Number of centers\n" \
+	"  -v         Verbose. Write center coordinates to stderr.\n" \
+	"  --netpbm   Write a netpbm image file to stdout\n"
+}
